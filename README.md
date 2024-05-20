@@ -1,1 +1,1 @@
-# Facial-Recognition-Attendees-System
+# Face-Recognition-Attendees-System
