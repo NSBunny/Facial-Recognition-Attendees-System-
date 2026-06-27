@@ -3,107 +3,113 @@ import cv2
 import numpy as np
 import csv
 from datetime import datetime
+from pathlib import Path
 
 # Initialize video capture from the default camera
 video_capture = cv2.VideoCapture(0)
 
 # Load known faces and their encodings
-bunny_image = face_recognition.load_image_file("C:/Users/nsban/OneDrive/Documents/New folder/Bunny.jpg")
+image_path = Path(__file__).resolve().parent / "pp2.jpg"
+if not image_path.exists():
+    raise FileNotFoundError(f"Image not found: {image_path}")
+
+bunny_image = face_recognition.load_image_file(str(image_path))
 bunny_encoding = face_recognition.face_encodings(bunny_image)[0]
 
-rajeev_image = face_recognition.load_image_file("C:/Users/nsban/OneDrive/Documents/New folder/Rajeev.jpg")
-rajeev_encoding = face_recognition.face_encodings(rajeev_image)[0]
 
 # Create lists of known face encodings and corresponding names
 known_face_encodings = [
-    bunny_encoding,
-    rajeev_encoding
+    bunny_encoding
 ]
 
 known_face_names = [
     "Bunny",
-    "Rajeev"
 ]
 
 # Create CSV file for attendance
-now = datetime.now()
-current_date = now.strftime("%Y-%m-%d")
+current_date = datetime.now().strftime("%Y-%m-%d")
 csv_file_path = current_date + '.csv'
 
+attendance = {name: {'Time': '', 'Attendence': 'Absent'} for name in known_face_names}
+if Path(csv_file_path).exists():
+    with open(csv_file_path, 'r', newline='') as csv_file:
+        csv_reader = csv.DictReader(csv_file)
+        for row in csv_reader:
+            if row and row.get('Name') in attendance:
+                attendance[row['Name']]['Time'] = row.get('Time', '')
+                attendance[row['Name']]['Attendence'] = row.get('Attendence', 'Absent')
+
+# Write attendance dictionary back to CSV so the file has one row per known student
+def write_attendance_file():
+    with open(csv_file_path, 'w', newline='') as csv_file:
+        fieldnames = ['Name', 'Time', 'Attendence']
+        csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        csv_writer.writeheader()
+        for name in known_face_names:
+            row = {
+                'Name': name,
+                'Time': attendance[name]['Time'],
+                'Attendence': attendance[name]['Attendence']
+            }
+            csv_writer.writerow(row)
+
+write_attendance_file()
+
 try:
-    with open(csv_file_path, 'w+', newline='') as csv_file:
-        csv_writer = csv.writer(csv_file)
-        csv_writer.writerow(['Name', 'Time'])  # Write header row
-        
-        # Initialize variables for face recognition and attendance tracking
-        students_present = known_face_names.copy()
+    while True:
+        # Capture frame-by-frame
+        ret, frame = video_capture.read()
+        if not ret:
+            print("Failed to read from camera.")
+            break
 
-        while True:
-            # Capture frame-by-frame
-            ret, frame = video_capture.read()
+        # Resize frame for faster processing
+        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+        rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
 
-            # Resize frame for faster processing
-            small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-            rgb_small_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        # Find all face locations and encodings in the current frame
+        face_locations = face_recognition.face_locations(rgb_small_frame)
+        face_encodings = face_recognition.face_encodings(rgb_small_frame, face_locations)
 
-            # Find all face locations and encodings in the current frame
-            face_locations = face_recognition.face_locations(rgb_small_frame)
-            face_encodings = []
-            for top, right, bottom, left in face_locations:
-                # Convert top, right, bottom, left to original size
-                top *= 4
-                right *= 4
-                bottom *= 4
-                left *= 4
+        # Recognize faces in the frame
+        face_names = []
+        updated = False
+        for face_encoding in face_encodings:
+            matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
+            name = "Unknown"
 
-                # Extract the face image from the original frame
-                face_image = frame[top:bottom, left:right]
-                # Convert the face image to RGB (as face_recognition library expects RGB)
-                rgb_face_image = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
-                # Compute the encoding for the face
-                face_encoding = face_recognition.face_encodings(rgb_face_image)
-                if face_encoding:
-                    face_encodings.append(face_encoding[0])
-                else:
-                    print("No face encoding found for the detected face.")
+            if True in matches:
+                first_match_index = matches.index(True)
+                name = known_face_names[first_match_index]
 
-            # Recognize faces in the frame
-            face_names = []
-            for face_encoding in face_encodings:
-                matches = face_recognition.compare_faces(known_face_encodings, face_encoding)
-                name = "Unknown"
+            face_names.append(name)
 
-                if True in matches:
-                    first_match_index = matches.index(True)
-                    name = known_face_names[first_match_index]
-                
-                face_names.append(name)
+            if name in attendance and attendance[name]['Attendence'] != 'Present':
+                attendance[name]['Attendence'] = 'Present'
+                attendance[name]['Time'] = datetime.now().strftime("%H:%M:%S")
+                write_attendance_file()
+                updated = True
 
-                # Update attendance and remove recognized students
-                if name in students_present:
-                    students_present.remove(name)
-                    current_time = now.strftime("%H-%M-%S")
-                    csv_writer.writerow([name, current_time])
+        # Display the recognized faces and attendance Attendence on the frame
+        for (top, right, bottom, left), name in zip(face_locations, face_names):
+            top *= 4
+            right *= 4
+            bottom *= 4
+            left *= 4
 
-            # Display the recognized faces and attendance status on the frame
-            for (top, right, bottom, left), name in zip(face_locations, face_names):
-                top *= 4
-                right *= 4
-                bottom *= 4
-                left *= 4
+            # Draw a box around the face
+            cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
 
-                # Draw a box around the face
-                cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
+            # Draw a label with the name below the face
+            label = name + ' Present' if name != 'Unknown' else 'Unknown'
+            cv2.putText(frame, label, (left + 6, bottom + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-                # Draw a label with the name below the face
-                cv2.putText(frame, name + ' Present', (left + 6, bottom + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        # Display the resulting frame
+        cv2.imshow('Attendance System', frame)
 
-            # Display the resulting frame
-            cv2.imshow('Attendance System', frame)
-
-            # Break the loop if 'q' is pressed
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+        # Break the loop if 'q' is pressed
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 except Exception as e:
     print("Error occurred while creating or writing to CSV file:", e)
 
